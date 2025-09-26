@@ -1,6 +1,8 @@
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn find_cdylib_in(dir: &Path, prefix: &str, exts: &[&str]) -> Option<PathBuf> {
     if !dir.exists() {
@@ -21,7 +23,37 @@ fn find_cdylib_in(dir: &Path, prefix: &str, exts: &[&str]) -> Option<PathBuf> {
     None
 }
 
+fn get_git_version() -> String {
+    let version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".to_string());
+    match Command::new("git").args(["describe", "--always"]).output() {
+        Ok(child) => {
+            let out = String::from_utf8_lossy(&child.stdout).trim().to_string();
+            if out.is_empty() {
+                version
+            } else {
+                format!("{}-{}", version, out)
+            }
+        }
+        Err(_) => version,
+    }
+}
+
+fn write_version_file(out_dir: &Path) {
+    let version = get_git_version();
+    let version_path = out_dir.join("VERSION");
+    if let Ok(mut file) = fs::File::create(&version_path) {
+        let _ = file.write_all(version.trim().as_bytes());
+    } else {
+        println!("cargo:warning=Failed to write VERSION to {:?}", version_path);
+    }
+}
+
 fn main() {
+    // 1) write VERSION
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    write_version_file(&out_dir);
+
+    // 2) try to locate and copy cdylib produced by `version` crate, and export env var
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_else(|_| "windows".to_string());
     let (prefix, exts) = match target_os.as_str() {
         "windows" => ("version", vec![".dll"]),
@@ -32,7 +64,6 @@ fn main() {
     let profile = env::var("PROFILE").unwrap_or_else(|_| "release".to_string());
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    // workspace root is two levels up from packages/huawei-pc-manager-bootstrap
     let workspace_root = manifest_dir
         .parent()
         .and_then(|p| p.parent())
@@ -42,7 +73,6 @@ fn main() {
     let mut candidates = Vec::new();
     candidates.push(workspace_root.join("target").join(&profile));
     candidates.push(workspace_root.join("target").join(&profile).join("deps"));
-    // Also check the version package target/ dir (in case the project isn't a workspace)
     candidates.push(manifest_dir.join("..").join("version").join("target").join(&profile));
     candidates.push(manifest_dir.join("..").join("version").join("target").join(&profile).join("deps"));
 
@@ -54,47 +84,15 @@ fn main() {
         }
     }
 
-    if found.is_none() {
-        println!("cargo:warning=Could not locate version cdylib in workspace target directories. Searched candidates.");
-        return;
-    }
-
-    let candidate = found.unwrap();
-    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let dst = out_dir.join(candidate.file_name().unwrap());
-    if let Err(e) = fs::copy(&candidate, &dst) {
-        println!("cargo:warning=Failed to copy cdylib from {:?} to {:?}: {}", candidate, dst, e);
-        return;
-    }
-
-    let dst_str = dst.to_string_lossy();
-    println!("cargo:rustc-env=CARGO_CDYLIB_FILE_VERSION_version={}", dst_str);
-}
-use std::env;
-use std::fs::File;
-use std::io::Write;
-use std::path::Path;
-use std::process::Command;
-
-fn get_git_version() -> String {
-    let version = env::var("CARGO_PKG_VERSION").unwrap();
-
-    let child = Command::new("git").args(["describe", "--always"]).output();
-    match child {
-        Ok(child) => {
-            version
-                + "-"
-                + String::from_utf8(child.stdout)
-                    .expect("failed to read stdout")
-                    .as_str()
+    if let Some(candidate) = found {
+        let dst = out_dir.join(candidate.file_name().unwrap());
+        if let Err(e) = fs::copy(&candidate, &dst) {
+            println!("cargo:warning=Failed to copy cdylib from {:?} to {:?}: {}", candidate, dst, e);
+        } else {
+            let dst_str = dst.to_string_lossy();
+            println!("cargo:rustc-env=CARGO_CDYLIB_FILE_VERSION_version={}", dst_str);
         }
-        Err(_) => version,
+    } else {
+        println!("cargo:warning=Could not locate version cdylib in workspace target directories.");
     }
-}
-
-fn main() {
-    let version = get_git_version();
-    let mut version_file =
-        File::create(Path::new(&env::var("OUT_DIR").unwrap()).join("VERSION")).unwrap();
-    version_file.write_all(version.trim().as_bytes()).unwrap();
 }
