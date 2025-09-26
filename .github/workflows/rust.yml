@@ -32,7 +32,7 @@ jobs:
       run: cargo build --release
 
     - name: Upload build artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: huawei-pc-manager-bootstrap
         path: target/release/huawei-pc-manager-bootstrap.exe
