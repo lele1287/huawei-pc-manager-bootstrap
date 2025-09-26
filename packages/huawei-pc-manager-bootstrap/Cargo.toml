@@ -1,6 +1,7 @@
 [package]
 name = "huawei-pc-manager-bootstrap"
 version = "0.1.9"
+build = "build.rs"
 edition = "2021"
 
 [dependencies]

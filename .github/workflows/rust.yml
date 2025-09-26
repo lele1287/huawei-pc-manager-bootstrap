@@ -29,7 +29,11 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Build project
-      run: cargo +nightly build --release
+      run: |
+        # Build the `version` crate first so its cdylib is available for the main crate's build script
+        cargo +nightly build -p version --release
+        # Then build the whole workspace
+        cargo +nightly build --release
 
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
